@@ -1,0 +1,17 @@
+.env
+*.json
+__pycache__/
+.streamlit/secrets.toml
+
+# Permitir config de Streamlit
+!.streamlit/config.toml
+*.xlsx
+
+# But allow the template directory file
+!directorio_proveedores.xlsx
+
+# Temp files
+~$*.xlsx
+*.pdf
+*.png
+temp_*/
