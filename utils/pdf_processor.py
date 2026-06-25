@@ -48,12 +48,13 @@ def extraer_texto_pagina(pdf_bytes: bytes, pagina_idx: int) -> str:
 
 
 def convertir_pagina_a_imagen(
-    pdf_bytes: bytes, pagina_idx: int, dpi: int = 300
+    pdf_bytes: bytes, pagina_idx: int, dpi: int = 250
 ) -> bytes:
     """
     Convierte una página específica del PDF a imagen (bytes).
     Usa PyMuPDF (fitz) + preprocesamiento con Pillow para mejorar legibilidad.
-    Retorna JPEG comprimido para reducir tamaño de envío a OpenAI.
+    Retorna JPEG comprimido para reducir tamaño de envío a Gemini.
+    DPI 200 es suficiente para Gemini 2.5 Flash (más rápido).
     """
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     if pagina_idx < len(doc):
@@ -70,9 +71,39 @@ def convertir_pagina_a_imagen(
 
         # Comprimir como JPEG (mucho más pequeño que PNG)
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=90, optimize=True)
+        img.save(buf, format="JPEG", quality=85, optimize=True)
         return buf.getvalue()
     return b""
+
+
+def dividir_imagen_en_zonas(imagen_bytes: bytes) -> dict[str, bytes]:
+    """
+    Divide la imagen del folio en zonas para enviar a Gemini por separado.
+    Aprovecha que todos los folios tienen la misma estructura.
+
+    Retorna dict con:
+    - 'campos': zona superior con datos del proveedor, factura, fechas
+    - 'tabla': zona media con las partidas/artículos
+    """
+    img = Image.open(io.BytesIO(imagen_bytes))
+    ancho, alto = img.size
+
+    # Zona 1: Campos superiores (0% a 55% de la altura)
+    # Incluye: Razón Social, Sucursal, Factura, Folio Puerta, Fechas, Acuse
+    campos = img.crop((0, 0, ancho, int(alto * 0.55)))
+    buf_campos = io.BytesIO()
+    campos.save(buf_campos, format="JPEG", quality=85, optimize=True)
+
+    # Zona 2: Tabla de partidas (40% a 95% de la altura)
+    # Solapamiento del 15% para no perder datos entre zonas
+    tabla = img.crop((0, int(alto * 0.40), ancho, int(alto * 0.95)))
+    buf_tabla = io.BytesIO()
+    tabla.save(buf_tabla, format="JPEG", quality=85, optimize=True)
+
+    return {
+        "campos": buf_campos.getvalue(),
+        "tabla": buf_tabla.getvalue(),
+    }
 
 
 def obtener_imagen_pagina(pdf_bytes: bytes, pagina_idx: int) -> bytes:

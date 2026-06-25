@@ -14,20 +14,33 @@ import config
 def _obtener_credenciales():
     """
     Obtiene credenciales de Service Account de Google.
+    Prioridad: string JSON (Streamlit secrets) > archivo JSON (local).
     Retorna None si no hay configuración (modo simulación).
     """
-    if not config.GOOGLE_SERVICE_ACCOUNT_FILE:
-        return None
     try:
         from google.oauth2 import service_account
         from google.auth.transport.requests import Request
 
-        creds = service_account.Credentials.from_service_account_file(
-            config.GOOGLE_SERVICE_ACCOUNT_FILE,
-            scopes=config.GOOGLE_API_SCOPES,
-        )
-        creds.refresh(Request())
-        return creds
+        # Prioridad 1: String JSON desde Streamlit secrets
+        if config.GOOGLE_SERVICE_ACCOUNT_JSON:
+            import json as _json
+            info = _json.loads(config.GOOGLE_SERVICE_ACCOUNT_JSON)
+            creds = service_account.Credentials.from_service_account_info(
+                info, scopes=config.GOOGLE_API_SCOPES
+            )
+            creds.refresh(Request())
+            return creds
+
+        # Prioridad 2: Archivo JSON local
+        if config.GOOGLE_SERVICE_ACCOUNT_FILE:
+            creds = service_account.Credentials.from_service_account_file(
+                config.GOOGLE_SERVICE_ACCOUNT_FILE,
+                scopes=config.GOOGLE_API_SCOPES,
+            )
+            creds.refresh(Request())
+            return creds
+
+        return None
     except Exception as e:
         print(f"[Google Drive] Error de credenciales: {e}")
         return None

@@ -38,7 +38,7 @@ OPENAI_MODEL: str = "gpt-4o"
 # Google Gemini
 # ──────────────────────────────────────────────
 GEMINI_API_KEY: str = _get("GEMINI_API_KEY")
-GEMINI_MODEL: str = "gemini-2.5-pro"
+GEMINI_MODEL: str = "gemini-2.5-flash"
 
 # Modelo activo para extracción: "gemini" o "openai"
 # Gemini tiene prioridad si hay API key configurada
@@ -70,7 +70,9 @@ OPENAI_SYSTEM_PROMPT: str = (
 # ──────────────────────────────────────────────
 # Google Drive
 # ──────────────────────────────────────────────
+# En local: usar archivo JSON. En Streamlit Cloud: usar string JSON desde secrets.
 GOOGLE_SERVICE_ACCOUNT_FILE: str = _get("GOOGLE_SERVICE_ACCOUNT_FILE")
+GOOGLE_SERVICE_ACCOUNT_JSON: str = _get("GOOGLE_SERVICE_ACCOUNT_JSON")
 GOOGLE_DRIVE_MASTER_FOLDER_ID: str = _get("GOOGLE_DRIVE_MASTER_FOLDER_ID")
 GOOGLE_API_SCOPES: list[str] = [
     "https://www.googleapis.com/auth/drive",
@@ -112,5 +114,6 @@ def is_simulation_mode() -> bool:
         not OPENAI_API_KEY
         and not GEMINI_API_KEY
         and not GOOGLE_SERVICE_ACCOUNT_FILE
+        and not GOOGLE_SERVICE_ACCOUNT_JSON
         and not SMTP_USER
     )

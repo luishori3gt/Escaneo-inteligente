@@ -11,6 +11,8 @@ from typing import Any
 
 import config
 
+_gemini_model = None
+
 
 # Esquema JSON para Structured Outputs
 FOLIO_JSON_SCHEMA: dict[str, Any] = {
@@ -102,7 +104,7 @@ PROMPT_EXTRACCION = (
 def extraer_datos_folio(imagen_bytes: bytes) -> dict[str, Any]:
     """
     Envía una imagen de folio y extrae datos estructurados.
-    Usa Gemini 1.5 Pro si hay API key, sino OpenAI GPT-4o, sino simulación.
+    Usa Gemini 2.5 Flash (rápido) con imagen completa para mayor precisión.
     """
     if config.EXTRACTION_MODEL == "gemini":
         return _extraer_con_gemini(imagen_bytes)
@@ -113,16 +115,18 @@ def extraer_datos_folio(imagen_bytes: bytes) -> dict[str, Any]:
 
 
 def _extraer_con_gemini(imagen_bytes: bytes) -> dict[str, Any]:
-    """Extrae datos usando Google Gemini. Si se excede cuota, falla a OpenAI."""
+    """Extrae datos usando Gemini 2.5 Flash. Si se excede cuota, falla a OpenAI."""
     try:
         import google.generativeai as genai
 
-        genai.configure(api_key=config.GEMINI_API_KEY)
-
-        model = genai.GenerativeModel(
-            config.GEMINI_MODEL,
-            system_instruction=config.OPENAI_SYSTEM_PROMPT,
-        )
+        # Reutilizar modelo cacheado para evitar recrearlo en cada llamada
+        global _gemini_model
+        if _gemini_model is None:
+            genai.configure(api_key=config.GEMINI_API_KEY)
+            _gemini_model = genai.GenerativeModel(
+                config.GEMINI_MODEL,
+                system_instruction=config.OPENAI_SYSTEM_PROMPT,
+            )
 
         img_part = {
             "mime_type": "image/jpeg",
@@ -132,14 +136,14 @@ def _extraer_con_gemini(imagen_bytes: bytes) -> dict[str, Any]:
         max_reintentos = 2
         for intento in range(max_reintentos + 1):
             try:
-                response = model.generate_content(
+                response = _gemini_model.generate_content(
                     [PROMPT_EXTRACCION, img_part],
                     generation_config={
                         "temperature": 0,
                         "max_output_tokens": 8192,
                         "response_mime_type": "application/json",
                     },
-                    request_options={"timeout": 120},
+                    request_options={"timeout": 60},
                 )
 
                 contenido = response.text
@@ -157,12 +161,11 @@ def _extraer_con_gemini(imagen_bytes: bytes) -> dict[str, Any]:
 
             except Exception as e:
                 error_str = str(e)
-                # Si es error de cuota 429, hacer fallback a OpenAI
                 if "429" in error_str and config.OPENAI_API_KEY:
                     print("[Gemini] Cuota excedida, fallback a OpenAI...")
                     return _extraer_con_openai(imagen_bytes)
                 if intento < max_reintentos:
-                    time.sleep(3)
+                    time.sleep(2)
                     continue
                 return _respuesta_error(str(e))
 

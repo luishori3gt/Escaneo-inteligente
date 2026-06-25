@@ -338,49 +338,50 @@ if st.button(
         metric_paginas.metric("📄 Páginas", total_paginas)
         metric_proveedores.metric("🏢 Proveedores", 0)
 
-        # ── Paso 1: Extraer datos de cada página ──
-        st.markdown("#### Paso 1: Extracción de datos con IA")
-        datos_por_pagina = []
+        # ── Paso 1: Extraer datos de cada página (paralelo) ──
+        st.markdown("#### Paso 1: Extracción de datos con IA (procesamiento paralelo)")
+        datos_por_pagina = [None] * total_paginas
 
-        for i in range(total_paginas):
-            progress_bar.progress(
-                (i + 1) / (total_paginas * 2),
-                text=f"Extrayendo datos de página {i + 1} de {total_paginas}...",
-            )
+        import concurrent.futures
 
+        def procesar_pagina(idx):
+            """Procesa una página y retorna (idx, datos)."""
             try:
-                imagen = obtener_imagen_pagina(pdf_bytes, i)
+                imagen = obtener_imagen_pagina(pdf_bytes, idx)
                 datos = extraer_datos_folio(imagen)
-                datos_por_pagina.append(datos)
+                return (idx, datos)
+            except Exception as e:
+                return (idx, {"_error": str(e)})
 
-                # Delay entre peticiones para respetar rate limits
-                if i < total_paginas - 1:
-                    time.sleep(2)
+        MAX_HILOS = 4
+        completadas = 0
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_HILOS) as executor:
+            futures = {
+                executor.submit(procesar_pagina, i): i
+                for i in range(total_paginas)
+            }
+
+            for future in concurrent.futures.as_completed(futures):
+                idx, datos = future.result()
+                datos_por_pagina[idx] = datos
+                completadas += 1
+
+                progress_bar.progress(
+                    completadas / (total_paginas * 2),
+                    text=f"Extrayendo datos de página {completadas} de {total_paginas}...",
+                )
 
                 if datos.get("_error"):
                     st.session_state.errores += 1
                     st.warning(
-                        f"Página {i + 1}: Error de extracción - {datos['_error']}"
+                        f"Página {idx + 1}: Error de extracción - {datos['_error']}"
                     )
                 else:
                     st.session_state.exitos += 1
 
                 metric_exitos.metric("✅ Éxitos", st.session_state.exitos)
                 metric_errores.metric("❌ Errores", st.session_state.errores)
-
-            except Exception as e:
-                st.session_state.errores += 1
-                metric_errores.metric("❌ Errores", st.session_state.errores)
-                datos_por_pagina.append(
-                    {
-                        "proveedor": None,
-                        "numero_factura_folio": None,
-                        "fecha": None,
-                        "partidas": [],
-                        "_error": str(e),
-                    }
-                )
-                st.warning(f"Página {i + 1}: Error - {e}")
 
         # ── Paso 2: Agrupar páginas contiguas ──
         st.markdown("#### Paso 2: Agrupación de folios por proveedor")
@@ -512,6 +513,75 @@ if st.session_state.resultados:
     st.markdown("---")
     st.markdown("## ✉ Envío de Correos por Proveedor")
 
+    # Botón para enviar todos los correos
+    df_directorio_global = cargar_directorio_proveedores()
+    proveedores_con_email = []
+    for r in st.session_state.resultados:
+        proveedor = r.get("proveedor", "Desconocido")
+        if df_directorio_global is not None:
+            email = buscar_email_proveedor(proveedor, df_directorio_global)
+            if email:
+                proveedores_con_email.append((r, email))
+
+    if proveedores_con_email:
+        if st.button(
+            f"📧 Enviar TODOS los correos ({len(proveedores_con_email)} proveedores)",
+            key="btn_send_all",
+            use_container_width=True,
+            type="primary",
+        ):
+            enviados = 0
+            errores = 0
+            with st.spinner(f"Enviando {len(proveedores_con_email)} correos..."):
+                for r, email_destino in proveedores_con_email:
+                    proveedor = r.get("proveedor", "Desconocido")
+                    fecha = r.get("fecha", "")
+                    folio = r.get("numero_factura_folio", "")
+
+                    datos_proveedor = []
+                    for p in r.get("partidas", []):
+                        datos_proveedor.append(
+                            {
+                                "fecha": fecha,
+                                "numero_factura_folio": folio,
+                                "cajas": p.get("cajas", 0),
+                                "folio_puerta": r.get("folio_puerta", ""),
+                                "sucursal_receptora": r.get("sucursal_receptora", ""),
+                            }
+                        )
+
+                    excel_bytes = generar_excel_proveedor(
+                        datos_proveedor, proveedor
+                    )
+                    excel_nombre = f"Resumen_{proveedor}_{folio}.xlsx"
+                    pdf_bytes = r.get("pdf_bytes")
+                    pdf_nombre = r.get("nombre_archivo", "folio.pdf")
+
+                    resultado_email = enviar_correo_proveedor(
+                        email_destino=email_destino,
+                        proveedor=proveedor,
+                        fecha_folio=fecha,
+                        pdf_bytes=pdf_bytes,
+                        pdf_nombre=pdf_nombre,
+                        excel_bytes=excel_bytes,
+                        excel_nombre=excel_nombre,
+                    )
+
+                    if resultado_email.get("success"):
+                        enviados += 1
+                    else:
+                        errores += 1
+                        st.warning(
+                            f"Error {proveedor}: {resultado_email.get('error', 'Desconocido')}"
+                        )
+
+            if enviados > 0:
+                st.success(f"✅ {enviados} correo(s) enviado(s) correctamente.")
+            if errores > 0:
+                st.error(f"❌ {errores} correo(s) con error.")
+            if errores == 0 and enviados > 0:
+                st.balloons()
+
     for idx, r in enumerate(st.session_state.resultados):
         proveedor = r.get("proveedor", "Desconocido")
         fecha = r.get("fecha", "")
@@ -573,6 +643,7 @@ if st.session_state.resultados:
                                         "numero_factura_folio": folio,
                                         "cajas": p.get("cajas", 0),
                                         "folio_puerta": r.get("folio_puerta", ""),
+                                        "sucursal_receptora": r.get("sucursal_receptora", ""),
                                     }
                                 )
 

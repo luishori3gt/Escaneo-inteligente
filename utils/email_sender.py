@@ -20,9 +20,60 @@ import pandas as pd
 import config
 
 
+def _separar_emails(texto_emails: str) -> list[str]:
+    """
+    Separa un string que puede contener múltiples emails
+    separados por espacios, comas, punto y coma, o combinaciones.
+    Filtra strings que no son emails válidos.
+    """
+    if not texto_emails:
+        return []
+    # Reemplazar separadores comunes por un separador único
+    texto = texto_emails.replace(",", " ").replace(";", " ")
+    # Dividir por espacios
+    partes = texto.split()
+    # Filtrar solo lo que parece email (contiene @ y .)
+    emails = [p.strip() for p in partes if "@" in p and "." in p]
+    return emails
+
+
 # ──────────────────────────────────────────────
 # Directorio de proveedores
 # ──────────────────────────────────────────────
+
+def cargar_emails_cc() -> list[str]:
+    """
+    Carga los emails para ir en copia (CC) desde la hoja
+    'Para ir en todos los correos' del directorio_proveedores.xlsx.
+    """
+    ruta = config.DIRECTORIO_PROVEEDORES_FILE
+    if not os.path.exists(ruta):
+        return []
+    try:
+        xl = pd.ExcelFile(ruta)
+        nombre_hoja = "Para ir en todos los correos"
+        if nombre_hoja not in xl.sheet_names:
+            return []
+        df = pd.read_excel(ruta, sheet_name=nombre_hoja)
+        # Los emails están en formato "Nombre" <email> en una sola celda
+        texto = ""
+        for col in df.columns:
+            valores = df[col].astype(str).tolist()
+            texto += " ".join(valores) + " "
+        # Extraer emails con regex: buscar patrón <email> o email directo
+        emails_encontrados = re.findall(r'[\w.+-]+@[\w-]+\.[\w.-]+', texto)
+        # Filtrar duplicados manteniendo orden
+        vistos = set()
+        emails = []
+        for e in emails_encontrados:
+            e = e.lower().strip()
+            if e not in vistos and "." in e:
+                vistos.add(e)
+                emails.append(e)
+        return emails
+    except Exception as e:
+        print(f"[CC] Error al cargar: {e}")
+        return []
 
 def cargar_directorio_proveedores() -> pd.DataFrame | None:
     """
@@ -183,7 +234,8 @@ def generar_excel_proveedor(
 ) -> bytes:
     """
     Genera un Excel personalizado para un proveedor específico.
-    Columnas: Proveedor, Fecha, Factura, Número de Cajas, Número de Folio.
+    Agrupa por sucursal/folio/factura sumando el total de cajas.
+    Columnas: Proveedor, Sucursal, Fecha, Factura, Folio, Total Cajas.
 
     Args:
         datos_proveedor: Lista de dicts con los datos de las partidas del proveedor.
@@ -192,15 +244,30 @@ def generar_excel_proveedor(
     Returns:
         Bytes del archivo Excel generado.
     """
-    filas = []
+    # Agrupar por sucursal + folio + factura + fecha, sumando cajas
+    grupos = {}
     for item in datos_proveedor:
+        sucursal = item.get("sucursal_receptora", "No identificado")
+        folio = item.get("folio_puerta", "No identificado")
+        factura = item.get("numero_factura_folio", "No identificado")
+        fecha = item.get("fecha", "No identificado")
+        cajas = item.get("cajas", 0) or 0
+
+        clave = (sucursal, folio, factura, fecha)
+        if clave not in grupos:
+            grupos[clave] = 0
+        grupos[clave] += cajas
+
+    filas = []
+    for (sucursal, folio, factura, fecha), total_cajas in grupos.items():
         filas.append(
             {
                 "Proveedor": proveedor,
-                "Fecha": item.get("fecha", ""),
-                "Factura": item.get("numero_factura_folio", ""),
-                "Número de Cajas": item.get("cajas", 0),
-                "Número de Folio": item.get("folio_puerta", ""),
+                "Sucursal": sucursal,
+                "Fecha": fecha,
+                "Factura": factura,
+                "Folio": folio,
+                "Total Cajas": total_cajas,
             }
         )
 
@@ -249,8 +316,19 @@ def enviar_correo_proveedor(
 
         msg = MIMEMultipart()
         msg["From"] = f"{config.SMTP_FROM_NAME} <{config.SMTP_USER}>"
-        msg["To"] = email_destino
-        msg["Subject"] = asunto
+        # Modo de prueba: enviar solo a lmartinezh@vpcom.com
+        if os.getenv("EMAIL_TEST_MODE", "").lower() in ("1", "true", "yes"):
+            emails = ["lmartinezh@vpcom.com"]
+            emails_cc = []
+            msg["To"] = ", ".join(emails)
+            msg["Subject"] = f"[PRUEBA] {asunto}"
+        else:
+            emails = _separar_emails(email_destino)
+            msg["To"] = ", ".join(emails)
+            emails_cc = cargar_emails_cc()
+            if emails_cc:
+                msg["Cc"] = ", ".join(emails_cc)
+            msg["Subject"] = asunto
 
         msg.attach(MIMEText(cuerpo, "plain", "utf-8"))
 
@@ -278,11 +356,12 @@ def enviar_correo_proveedor(
         )
         msg.attach(part_excel)
 
-        # Enviar
+        # Enviar (To + CC como destinatarios SMTP)
         server = smtplib.SMTP(config.SMTP_SERVER, config.SMTP_PORT)
         server.starttls()
         server.login(config.SMTP_USER, config.SMTP_PASSWORD)
-        server.sendmail(config.SMTP_USER, email_destino, msg.as_string())
+        destinatarios = emails + emails_cc
+        server.sendmail(config.SMTP_USER, destinatarios, msg.as_string())
         server.quit()
 
         return {"success": True, "error": None}
@@ -307,7 +386,7 @@ Se incluyen los siguientes documentos:
 Favor de revisar y confirmar la recepción.
 
 Saludos cordiales,
-Sistema de Folios - Operación City y Fresko
+Equipo de VPC CEDA
 """
 
 

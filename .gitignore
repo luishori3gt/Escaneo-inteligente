@@ -1,17 +1,25 @@
 .env
-*.json
 __pycache__/
 .streamlit/secrets.toml
 
 # Permitir config de Streamlit
 !.streamlit/config.toml
-*.xlsx
 
-# But allow the template directory file
+# Excel necesarios para la app
+*.xlsx
 !directorio_proveedores.xlsx
+!Campos a extraer.xlsx
+!Lineas transporte tabla.xlsx
+
+# JSON del service account (se pasa por Streamlit secrets como string)
+*.json
+.streamlit/secrets.toml
 
 # Temp files
 ~$*.xlsx
 *.pdf
-*.png
+pagina_*.png
+folio_test.png
+folio_test.jpg
+folio_p1.jpg
 temp_*/
