@@ -9,10 +9,14 @@ import os
 import io
 import time
 import tempfile
+from datetime import datetime
 from typing import Any
 
 import streamlit as st
 import pandas as pd
+
+APP_VERSION = "v2.5.0"
+APP_BUILD_DATE = "2026-06-25"
 
 import config
 from utils.pdf_processor import (
@@ -87,6 +91,12 @@ df_directorio = cargar_directorio()
 
 with st.sidebar:
     st.markdown("## ⚙️ Configuración")
+
+    # Badge de versión
+    st.markdown(
+        f"`{APP_VERSION}` | Build: {APP_BUILD_DATE} | "
+        f"Actualizado: {datetime.now().strftime('%H:%M')}"
+    )
 
     modo_sim = config.is_simulation_mode()
     if modo_sim:
@@ -288,6 +298,7 @@ def agrupar_paginas(
                 "fecha": datos.get("fecha", ""),
                 "sucursal_receptora": datos.get("sucursal_receptora"),
                 "folio_puerta": datos.get("folio_puerta"),
+                "tipo_documento": datos.get("tipo_documento", "No identificado"),
                 "acuse_de_recibo": datos.get("acuse_de_recibo"),
                 "paginas": [idx],
                 "partidas": list(datos.get("partidas", [])),
@@ -422,6 +433,7 @@ if st.button(
                 "sucursal_receptora": micro.get("sucursal_receptora"),
                 "numero_factura_folio": micro.get("numero_factura_folio"),
                 "folio_puerta": micro.get("folio_puerta"),
+                "tipo_documento": micro.get("tipo_documento", "No identificado"),
                 "acuse_de_recibo": micro.get("acuse_de_recibo"),
                 "fecha": fecha,
                 "partidas": micro.get("partidas", []),
@@ -459,26 +471,60 @@ if st.session_state.resultados:
     st.markdown("---")
     st.markdown("## 📋 Resultados de Procesamiento")
 
-    # Construir DataFrame para la tabla resumen
-    filas_resumen = []
+    # Separar Acuse de Recibo de documentos no identificados
+    resultados_acuse = []
+    resultados_no_identificados = []
     for r in st.session_state.resultados:
-        cajas_totales = sum(p.get("cajas", 0) for p in r.get("partidas", []))
-        filas_resumen.append(
-            {
-                "Proveedor": r.get("proveedor", ""),
-                "Fecha": r.get("fecha", ""),
-                "Factura/Folio": r.get("numero_factura_folio", ""),
-                "Folio Puerta": r.get("folio_puerta", ""),
-                "Sucursal": r.get("sucursal_receptora", ""),
-                "Cajas Totales": cajas_totales,
-                "Partidas": len(r.get("partidas", [])),
-                "Estatus": r.get("estatus_validacion", ""),
-                "Drive": "✅" if r.get("drive_success") else "❌",
-            }
-        )
+        tipo = r.get("tipo_documento", "No identificado")
+        if "acuse" in tipo.lower() and "recibo" in tipo.lower():
+            resultados_acuse.append(r)
+        else:
+            resultados_no_identificados.append(r)
 
-    df_resumen = pd.DataFrame(filas_resumen)
-    st.dataframe(df_resumen, use_container_width=True, hide_index=True)
+    # ── Sección 1: Acuses de Recibo ──
+    st.markdown(f"### ✅ Acuses de Recibo ({len(resultados_acuse)})")
+
+    if resultados_acuse:
+        filas_resumen = []
+        for r in resultados_acuse:
+            cajas_totales = sum(p.get("cajas", 0) for p in r.get("partidas", []))
+            filas_resumen.append(
+                {
+                    "Proveedor": r.get("proveedor", ""),
+                    "Fecha": r.get("fecha", ""),
+                    "Factura/Folio": r.get("numero_factura_folio", ""),
+                    "Folio Puerta": r.get("folio_puerta", ""),
+                    "Sucursal": r.get("sucursal_receptora", ""),
+                    "Cajas Totales": cajas_totales,
+                    "Partidas": len(r.get("partidas", [])),
+                    "Estatus": r.get("estatus_validacion", ""),
+                    "Drive": "✅" if r.get("drive_success") else "❌",
+                }
+            )
+
+        df_resumen = pd.DataFrame(filas_resumen)
+        st.dataframe(df_resumen, use_container_width=True, hide_index=True)
+    else:
+        st.info("No se encontraron Acuses de Recibo.")
+
+    # ── Sección 2: Documentos no identificados ──
+    if resultados_no_identificados:
+        st.markdown(f"### ⚠️ Documentos No Identificados ({len(resultados_no_identificados)})")
+        filas_no_id = []
+        for r in resultados_no_identificados:
+            cajas_totales = sum(p.get("cajas", 0) for p in r.get("partidas", []))
+            filas_no_id.append(
+                {
+                    "Tipo Detectado": r.get("tipo_documento", "No identificado"),
+                    "Proveedor": r.get("proveedor", ""),
+                    "Fecha": r.get("fecha", ""),
+                    "Cajas": cajas_totales,
+                    "Drive": "✅" if r.get("drive_success") else "❌",
+                }
+            )
+        df_no_id = pd.DataFrame(filas_no_id)
+        st.dataframe(df_no_id, use_container_width=True, hide_index=True)
+        st.caption("Estos documentos no fueron identificados como 'Acuse de Recibo'.")
 
     # ── Botones de descarga global ──
     st.markdown("### 📥 Descargar Reportes")
@@ -513,10 +559,10 @@ if st.session_state.resultados:
     st.markdown("---")
     st.markdown("## ✉ Envío de Correos por Proveedor")
 
-    # Botón para enviar todos los correos
+    # Botón para enviar todos los correos (solo Acuses de Recibo)
     df_directorio_global = cargar_directorio_proveedores()
     proveedores_con_email = []
-    for r in st.session_state.resultados:
+    for r in resultados_acuse:
         proveedor = r.get("proveedor", "Desconocido")
         if df_directorio_global is not None:
             email = buscar_email_proveedor(proveedor, df_directorio_global)
@@ -582,125 +628,88 @@ if st.session_state.resultados:
             if errores == 0 and enviados > 0:
                 st.balloons()
 
-    for idx, r in enumerate(st.session_state.resultados):
+    for idx, r in enumerate(resultados_acuse):
         proveedor = r.get("proveedor", "Desconocido")
         fecha = r.get("fecha", "")
         folio = r.get("numero_factura_folio", "")
         cajas = sum(p.get("cajas", 0) for p in r.get("partidas", []))
 
-        with st.container(border=True):
-            col_p1, col_p2, col_p3, col_p4, col_p5, col_p6 = st.columns(
-                [3, 2, 2, 1, 1, 1]
-            )
+        col_p1, col_p2, col_p3, col_p4, col_p5 = st.columns(
+            [4, 2, 1.5, 1, 1]
+        )
 
-            with col_p1:
-                st.markdown(f"**{proveedor}**")
+        with col_p1:
+            st.markdown(f"**{proveedor}**")
 
-            with col_p2:
-                st.caption(f"Factura: {folio}")
+        with col_p2:
+            st.caption(f"Fact: {folio} | {fecha}")
 
-            with col_p3:
-                st.caption(f"Fecha: {fecha}")
+        with col_p3:
+            st.caption(f"Cajas: {cajas}")
 
-            with col_p4:
-                st.caption(f"Cajas: {cajas}")
+        with col_p4:
+            pdf_bytes_prov = r.get("pdf_bytes")
+            pdf_nombre_prov = r.get("nombre_archivo", "folio.pdf")
+            if pdf_bytes_prov:
+                st.download_button(
+                    "📥",
+                    data=pdf_bytes_prov,
+                    file_name=pdf_nombre_prov,
+                    mime="application/pdf",
+                    key=f"dl_pdf_{idx}",
+                )
 
-            with col_p5:
-                # Descargar PDF individual
-                pdf_bytes_prov = r.get("pdf_bytes")
-                pdf_nombre_prov = r.get("nombre_archivo", "folio.pdf")
-                if pdf_bytes_prov:
-                    st.download_button(
-                        "📥 PDF",
-                        data=pdf_bytes_prov,
-                        file_name=pdf_nombre_prov,
-                        mime="application/pdf",
-                        key=f"dl_pdf_{idx}",
-                        use_container_width=True,
-                    )
+        with col_p5:
+            email_destino = None
+            if df_directorio is not None:
+                email_destino = buscar_email_proveedor(
+                    proveedor, df_directorio
+                )
 
-            with col_p6:
-                # Buscar email del proveedor
-                email_destino = None
-                if df_directorio is not None:
-                    email_destino = buscar_email_proveedor(
-                        proveedor, df_directorio
-                    )
-
-                if email_destino:
-                    if st.button(
-                        "✉ Enviar Correo",
-                        key=f"btn_email_{idx}",
-                        use_container_width=True,
-                    ):
-                        with st.spinner(f"Enviando correo a {email_destino}..."):
-                            # Generar Excel adjunto
-                            datos_proveedor = []
-                            for p in r.get("partidas", []):
-                                datos_proveedor.append(
-                                    {
-                                        "fecha": fecha,
-                                        "numero_factura_folio": folio,
-                                        "cajas": p.get("cajas", 0),
-                                        "folio_puerta": r.get("folio_puerta", ""),
-                                        "sucursal_receptora": r.get("sucursal_receptora", ""),
-                                    }
-                                )
-
-                            excel_bytes = generar_excel_proveedor(
-                                datos_proveedor, proveedor
-                            )
-                            excel_nombre = (
-                                f"Resumen_{proveedor}_{folio}.xlsx"
+            if email_destino:
+                if st.button(
+                    "✉",
+                    key=f"btn_email_{idx}",
+                ):
+                    with st.spinner(f"Enviando correo a {email_destino}..."):
+                        datos_proveedor = []
+                        for p in r.get("partidas", []):
+                            datos_proveedor.append(
+                                {
+                                    "fecha": fecha,
+                                    "numero_factura_folio": folio,
+                                    "cajas": p.get("cajas", 0),
+                                    "folio_puerta": r.get("folio_puerta", ""),
+                                    "sucursal_receptora": r.get("sucursal_receptora", ""),
+                                }
                             )
 
-                            pdf_bytes = r.get("pdf_bytes")
-                            pdf_nombre = r.get("nombre_archivo", "folio.pdf")
-
-                            resultado_email = enviar_correo_proveedor(
-                                email_destino=email_destino,
-                                proveedor=proveedor,
-                                fecha_folio=fecha,
-                                pdf_bytes=pdf_bytes,
-                                pdf_nombre=pdf_nombre,
-                                excel_bytes=excel_bytes,
-                                excel_nombre=excel_nombre,
-                            )
-
-                            if resultado_email.get("success"):
-                                if resultado_email.get("simulacion"):
-                                    st.toast(
-                                        f"📧 Correo simulado enviado a "
-                                        f"{email_destino}",
-                                        icon="📧",
-                                    )
-                                else:
-                                    st.toast(
-                                        f"✅ Correo enviado correctamente a "
-                                        f"{email_destino}",
-                                        icon="✅",
-                                    )
-                            else:
-                                st.error(
-                                    f"Error al enviar correo: "
-                                    f"{resultado_email.get('error', 'Desconocido')}"
-                                )
-                else:
-                    st.button(
-                        "✉ Sin Email",
-                        key=f"btn_noemail_{idx}",
-                        disabled=True,
-                        use_container_width=True,
-                        help="No se encontró email para este proveedor "
-                        "en el directorio.",
-                    )
-                    if df_directorio is None:
-                        st.caption(
-                            "⚠️ Sin directorio",
-                            help="Coloca directorio_proveedores.xlsx en raíz",
+                        excel_bytes = generar_excel_proveedor(
+                            datos_proveedor, proveedor
                         )
-                    else:
-                        st.caption("No match en directorio")
+                        excel_nombre = f"Resumen_{proveedor}_{folio}.xlsx"
+                        pdf_bytes = r.get("pdf_bytes")
+                        pdf_nombre = r.get("nombre_archivo", "folio.pdf")
+
+                        resultado_email = enviar_correo_proveedor(
+                            email_destino=email_destino,
+                            proveedor=proveedor,
+                            fecha_folio=fecha,
+                            pdf_bytes=pdf_bytes,
+                            pdf_nombre=pdf_nombre,
+                            excel_bytes=excel_bytes,
+                            excel_nombre=excel_nombre,
+                        )
+
+                        if resultado_email.get("success"):
+                            if resultado_email.get("simulacion"):
+                                st.toast(f"📧 Simulado a {email_destino}", icon="📧")
+                            else:
+                                st.toast(f"✅ Enviado a {email_destino}", icon="✅")
+                        else:
+                            st.error(f"Error: {resultado_email.get('error', 'Desconocido')}")
+            else:
+                st.caption("🚫 Sin email", help="No se encontró email en el directorio")
 
 
 # ──────────────────────────────────────────────
@@ -709,7 +718,8 @@ if st.session_state.resultados:
 
 st.markdown("---")
 st.caption(
-    "Sistema de Folios Logísticos - Operación City y Fresko | "
+    f"Sistema de Folios Logísticos - Operación City y Fresko | "
     f"Modelo: {config.GEMINI_MODEL if config.EXTRACTION_MODEL == 'gemini' else config.OPENAI_MODEL} | "
-    f"{'Modo Simulación' if config.is_simulation_mode() else 'Modo Producción'}"
+    f"{'Modo Simulación' if config.is_simulation_mode() else 'Modo Producción'} | "
+    f"`{APP_VERSION}` ({APP_BUILD_DATE})"
 )

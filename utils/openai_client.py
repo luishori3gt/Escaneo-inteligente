@@ -35,6 +35,10 @@ FOLIO_JSON_SCHEMA: dict[str, Any] = {
             "type": "string",
             "description": "Folio de puerta asignado. Si no aparece, usar 'No identificado'.",
         },
+        "tipo_documento": {
+            "type": "string",
+            "description": "Tipo de documento. Si el encabezado dice 'Acuse de Recibo', usar 'Acuse de Recibo'. Si es otro tipo, describirlo brevemente.",
+        },
         "acuse_de_recibo": {
             "type": "string",
             "description": "Fecha del acuse de recibo en formato YYYY-MM-DD si es posible. Si no aparece, usar 'No identificado'.",
@@ -72,6 +76,7 @@ FOLIO_JSON_SCHEMA: dict[str, Any] = {
         "sucursal_receptora",
         "numero_factura_folio",
         "folio_puerta",
+        "tipo_documento",
         "acuse_de_recibo",
         "fecha",
         "partidas",
@@ -90,6 +95,7 @@ PROMPT_EXTRACCION = (
     '  "sucursal_receptora": "sucursal que recibe",\n'
     '  "numero_factura_folio": "número de factura",\n'
     '  "folio_puerta": "folio de puerta",\n'
+    '  "tipo_documento": "Acuse de Recibo u otro tipo",\n'
     '  "acuse_de_recibo": "fecha YYYY-MM-DD",\n'
     '  "fecha": "fecha YYYY-MM-DD",\n'
     '  "partidas": [\n'
@@ -151,7 +157,7 @@ def _extraer_con_gemini(imagen_bytes: bytes) -> dict[str, Any]:
 
                 # Asegurar campos requeridos
                 for campo in ["proveedor", "sucursal_receptora", "numero_factura_folio",
-                              "folio_puerta", "acuse_de_recibo", "fecha", "partidas"]:
+                              "folio_puerta", "tipo_documento", "acuse_de_recibo", "fecha", "partidas"]:
                     if campo not in datos:
                         datos[campo] = "No identificado" if campo != "partidas" else []
                 if not isinstance(datos["partidas"], list):

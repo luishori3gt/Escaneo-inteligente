@@ -186,4 +186,4 @@ def subir_micro_pdf(
 
 def es_simulacion() -> bool:
     """Retorna True si Google Drive no está configurado."""
-    return not config.GOOGLE_SERVICE_ACCOUNT_FILE
+    return not config.GOOGLE_SERVICE_ACCOUNT_FILE and not config.GOOGLE_SERVICE_ACCOUNT_JSON
